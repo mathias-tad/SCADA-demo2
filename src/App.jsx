@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { initialScadaUsers, ORIGINAL_ROLES, isActiveLast20Mins } from './mockData';
+import { initialScadaUsers, ORIGINAL_ROLES, isActiveLast20Mins, isWaterRole } from './mockData';
 import ScadaTopBar from './components/ScadaTopBar';
 import ScadaDashboard from './components/ScadaDashboard';
 import UserCard from './components/UserCard';
@@ -76,6 +76,9 @@ export default function App() {
   });
 
   const onDutyCount = users.filter(u => isActiveLast20Mins(u.lastActivity)).length;
+  const waterCount = users.filter(u => isWaterRole(u.selectedRole)).length;
+  const techCount = users.filter(u => !isWaterRole(u.selectedRole)).length;
+
 
 
   return (

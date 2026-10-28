@@ -1,479 +1,453 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
-/* ─── tiny helpers ────────────────────────────────────────────────── */
+/* ─── helpers ──────────────────────────────────────────────────────── */
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const rand  = (range) => (Math.random() - 0.5) * 2 * range;
+const fmt1  = (n) => n.toFixed(1);
+const fmt0  = (n) => Math.round(n).toString();
 
-/* ─── SVG semi-circle arc gauge ───────────────────────────────────── */
-function ArcGauge({ value, max, label, color }) {
-  const pct     = clamp(value / max, 0, 1);
-  const R       = 54;
-  const cx      = 70;
-  const cy      = 70;
-  const startA  = Math.PI;               // 180° left
-  const sweepA  = Math.PI;               // 180° sweep (half circle)
-  const angle   = startA + sweepA * pct;
-  const x1      = cx + R * Math.cos(startA);
-  const y1      = cy + R * Math.sin(startA);
-  const x2      = cx + R * Math.cos(Math.PI + Math.PI); // right end of arc
-  const arcX    = cx + R * Math.cos(angle);
-  const arcY    = cy + R * Math.sin(angle);
+/* ─── Sub-components ───────────────────────────────────────────────── */
 
-  // background arc path (full half-circle)
-  const bgPath  = `M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${cx + R} ${cy}`;
-  // value arc path
-  const largeArc = sweepA * pct > Math.PI ? 1 : 0;
-  const valPath  = pct > 0
-    ? `M ${cx - R} ${cy} A ${R} ${R} 0 ${largeArc} 1 ${arcX} ${arcY}`
-    : '';
-
+/** LCD-style readout box rendered in SVG */
+function LcdBox({ x, y, w = 120, h = 28, label, value, unit = '' }) {
   return (
-    <div className="d1-arc-gauge-wrap">
-      <svg width="140" height="82" viewBox="0 0 140 82">
-        {/* track */}
-        <path d={bgPath} fill="none" stroke="#1e3a5f" strokeWidth="10" strokeLinecap="round"/>
-        {/* value */}
-        {pct > 0 && (
-          <path d={valPath} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"/>
+    <g>
+      <rect x={x} y={y} width={w} height={h} rx={3} fill="#000" stroke="#00ff41" strokeWidth={1} />
+      <text x={x + 5} y={y + 10} fill="#00ff41" fontSize={7} fontFamily="monospace" opacity={0.7}>{label}</text>
+      <text x={x + w - 4} y={y + 22} fill="#00ff41" fontSize={11} fontFamily="monospace"
+            fontWeight="bold" textAnchor="end">{value}{unit}</text>
+    </g>
+  );
+}
+
+/** P&ID butterfly valve symbol */
+function Valve({ x, y, open = true, label }) {
+  const color = open ? '#22c55e' : '#ef4444';
+  return (
+    <g>
+      {/* two triangles meeting at centre */}
+      <polygon points={`${x - 8},${y - 8} ${x},${y} ${x - 8},${y + 8}`} fill={color} />
+      <polygon points={`${x + 8},${y - 8} ${x},${y} ${x + 8},${y + 8}`} fill={color} />
+      <circle cx={x} cy={y} r={2} fill="#fff" />
+      {label && (
+        <text x={x} y={y - 13} fill="#e2e8f0" fontSize={8} fontFamily="monospace" textAnchor="middle">{label}</text>
+      )}
+    </g>
+  );
+}
+
+/** Centrifugal pump symbol */
+function Pump({ x, y, running, label, flow }) {
+  const bodyColor = running ? '#f0c040' : '#6b7280';
+  const animRef   = useRef(null);
+  return (
+    <g>
+      {/* body circle */}
+      <circle cx={x} cy={y} r={28} fill={bodyColor} stroke="#374151" strokeWidth={2} />
+      {/* impeller lines — rotates when running */}
+      <g style={{ transformOrigin: `${x}px ${y}px` }}>
+        {running && (
+          <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from={`0 ${x} ${y}`}
+            to={`360 ${x} ${y}`}
+            dur="1.2s"
+            repeatCount="indefinite"
+          />
         )}
-        {/* needle dot */}
-        <circle cx={arcX} cy={arcY} r="5" fill={color}/>
-        {/* center value text */}
-        <text x={cx} y={cy - 4} textAnchor="middle" fill="#e2e8f0" fontSize="15" fontWeight="700">
-          {value.toFixed(1)}
-        </text>
-        <text x={cx} y={cy + 12} textAnchor="middle" fill="#64748b" fontSize="10">
-          bar
-        </text>
-      </svg>
-      <div className="d1-arc-label">{label}</div>
-    </div>
+        {[0, 60, 120, 180, 240, 300].map((deg) => {
+          const r = Math.PI * deg / 180;
+          return (
+            <line key={deg}
+              x1={x} y1={y}
+              x2={x + 20 * Math.cos(r)}
+              y2={y + 20 * Math.sin(r)}
+              stroke={running ? '#92400e' : '#374151'}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+            />
+          );
+        })}
+      </g>
+      {/* discharge triangle */}
+      <polygon
+        points={`${x + 28},${y} ${x + 14},${y - 10} ${x + 14},${y + 10}`}
+        fill="#374151"
+      />
+      {/* label */}
+      <text x={x} y={y + 44} fill="#e2e8f0" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">{label}</text>
+      <text x={x} y={y + 55} fill={running ? '#f0c040' : '#9ca3af'} fontSize={8} fontFamily="monospace" textAnchor="middle">
+        {running ? '● RUNNING' : '○ STANDBY'}
+      </text>
+      {/* flow readout */}
+      <LcdBox x={x - 46} y={y + 60} w={92} h={24} label="FLOW" value={flow} unit=" L/m" />
+    </g>
   );
 }
 
-/* ─── Pressure wave (animated SVG sine) ──────────────────────────── */
-function PressureWave({ color }) {
+/** Cylindrical tank with fill */
+function Tank({ x, y, id, pct, volume, warning }) {
+  const W = 70, H = 140;
+  const fillColor = warning ? '#f59e0b' : '#1e90ff';
+  const fillH = (H - 16) * (pct / 100);
+  const fillY = y + H - 10 - fillH;
+  const clipId = `clip-tank-${id}`;
   return (
-    <svg className="d1-pressure-wave" viewBox="0 0 200 32" preserveAspectRatio="none">
-      <path
-        d="M0 16 C20 4, 40 28, 60 16 S100 4, 120 16 S160 28, 180 16 S200 4, 200 16"
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        opacity="0.6"
-      >
-        <animateTransform
-          attributeName="transform"
-          type="translate"
-          from="-60 0"
-          to="0 0"
-          dur="2s"
-          repeatCount="indefinite"
-        />
-      </path>
-      <path
-        d="M0 16 C20 4, 40 28, 60 16 S100 4, 120 16 S160 28, 180 16 S200 4, 200 16"
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        opacity="0.3"
-      >
-        <animateTransform
-          attributeName="transform"
-          type="translate"
-          from="0 0"
-          to="60 0"
-          dur="2s"
-          repeatCount="indefinite"
-        />
-      </path>
-    </svg>
+    <g>
+      {/* clip path for liquid fill */}
+      <defs>
+        <clipPath id={clipId}>
+          <rect x={x} y={y + 8} width={W} height={H - 16} />
+        </clipPath>
+      </defs>
+      {/* shell */}
+      <rect x={x} y={y + 8} width={W} height={H - 16} fill="#1a3a4a" stroke="#4b6fa0" strokeWidth={2} />
+      {/* liquid fill */}
+      <rect x={x} y={fillY} width={W} height={fillH} fill={fillColor} opacity={0.85} clipPath={`url(#${clipId})`} />
+      {/* animated wave surface */}
+      <g clipPath={`url(#${clipId})`}>
+        <path
+          d={`M${x} ${fillY} q${W * 0.25} -6 ${W * 0.5} 0 q${W * 0.25} 6 ${W * 0.5} 0`}
+          fill="none"
+          stroke={fillColor}
+          strokeWidth={3}
+          opacity={0.9}
+        >
+          <animate attributeName="d"
+            values={
+              `M${x} ${fillY} q${W * 0.25} -6 ${W * 0.5} 0 q${W * 0.25} 6 ${W * 0.5} 0;` +
+              `M${x} ${fillY} q${W * 0.25} 6 ${W * 0.5} 0 q${W * 0.25} -6 ${W * 0.5} 0;` +
+              `M${x} ${fillY} q${W * 0.25} -6 ${W * 0.5} 0 q${W * 0.25} 6 ${W * 0.5} 0`
+            }
+            dur="2.5s"
+            repeatCount="indefinite"
+          />
+        </path>
+      </g>
+      {/* top ellipse */}
+      <ellipse cx={x + W / 2} cy={y + 8} rx={W / 2} ry={8} fill="#2a5080" stroke="#4b6fa0" strokeWidth={2} />
+      {/* bottom ellipse */}
+      <ellipse cx={x + W / 2} cy={y + H - 8} rx={W / 2} ry={8} fill="#1a3a4a" stroke="#4b6fa0" strokeWidth={2} />
+      {/* level indicator bar (right side) */}
+      <rect x={x + W + 4} y={y + 8} width={6} height={H - 16} fill="#0d1f2d" stroke="#4b6fa0" strokeWidth={1} />
+      <rect x={x + W + 4} y={fillY} width={6} height={fillH} fill={fillColor} />
+      {/* pct label on level bar */}
+      <text x={x + W + 7} y={fillY - 3} fill={fillColor} fontSize={7} fontFamily="monospace" textAnchor="middle">{Math.round(pct)}%</text>
+      {/* warning overlay */}
+      {warning && (
+        <text x={x + W / 2} y={y + H / 2 + 4} fill="#ef4444" fontSize={11} fontFamily="monospace" fontWeight="bold" textAnchor="middle">▲LOW</text>
+      )}
+      {/* labels below */}
+      <text x={x + W / 2} y={y + H + 14} fill="#e2e8f0" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">{id}</text>
+      <LcdBox x={x} y={y + H + 18} w={W} h={24} label="VOL" value={volume} unit=" ML" />
+    </g>
   );
 }
 
-/* ─── Main Dashboard ─────────────────────────────────────────────── */
+/** PRV symbol */
+function PRV({ x, y, upstream, downstream }) {
+  return (
+    <g>
+      <rect x={x - 30} y={y - 20} width={60} height={40} rx={4} fill="#374151" stroke="#6b7280" strokeWidth={2} />
+      {/* diagonal slash = PRV symbol */}
+      <line x1={x - 20} y1={y + 15} x2={x + 20} y2={y - 15} stroke="#f0c040" strokeWidth={2.5} />
+      <text x={x} y={y - 28} fill="#e2e8f0" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">PRV-001</text>
+      <LcdBox x={x - 72} y={y + 26} w={144} h={24} label="UPSTREAM" value={upstream} unit=" bar" />
+      <LcdBox x={x - 72} y={y + 54} w={144} h={24} label="DOWNSTREAM" value={downstream} unit=" bar" />
+    </g>
+  );
+}
+
+/** Distribution zone node */
+function ZoneNode({ x, y, label, pressure }) {
+  return (
+    <g>
+      {/* house polygon */}
+      <polygon points={`${x},${y - 24} ${x + 22},${y - 10} ${x + 22},${y + 18} ${x - 22},${y + 18} ${x - 22},${y - 10}`}
+        fill="#1e3a5f" stroke="#3b82f6" strokeWidth={2} />
+      {/* roof */}
+      <polygon points={`${x - 26},${y - 10} ${x},${y - 30} ${x + 26},${y - 10}`}
+        fill="#1e3a5f" stroke="#3b82f6" strokeWidth={2} />
+      {/* window */}
+      <rect x={x - 8} y={y - 4} width={16} height={12} fill="#93c5fd" opacity={0.5} />
+      <text x={x} y={y + 32} fill="#93c5fd" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">{label}</text>
+      <LcdBox x={x - 38} y={y + 38} w={76} h={24} label="PRES" value={pressure} unit=" bar" />
+    </g>
+  );
+}
+
+/* ─── Main Component ───────────────────────────────────────────────── */
 export default function ScadaDashboard() {
+  /* --- simulation state --- */
+  const [tankLevels, setTankLevels]     = useState([62, 78, 41]);
+  const [pump1Running, setPump1Running] = useState(true);
+  const [pump2Running, setPump2Running] = useState(false);
+  const [pressure, setPressure]         = useState({ sys: 4.2, upstream: 6.2, downstream: 4.1 });
+  const [zonePres, setZonePres]         = useState([3.8, 3.5, 3.9]);
+  const [totalFlow, setTotalFlow]       = useState(847);
+  const [tick, setTick]                 = useState(0);
 
-  /* ── state ── */
-  const [sysPressure,  setSysPressure]  = useState(4.2);
-  const [flowRate,     setFlowRate]     = useState(847);
-  const [activeAlarms, setActiveAlarms] = useState(2);
-  const [sysHealth,    setSysHealth]    = useState(98.4);
+  const now = new Date();
+  const timestamp = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
 
-  // tanks: { level%, volume ML, height m }
-  const [tankAlpha, setTankAlpha] = useState({ level: 62, volume: 3.1, height: 4.65 });
-  const [tankBeta,  setTankBeta]  = useState({ level: 78, volume: 3.9, height: 5.85 });
-  const [tankGamma, setTankGamma] = useState({ level: 41, volume: 2.05, height: 3.075 });
-
-  // pumps
-  const [pump1, setPump1] = useState({ running: true,  flow: 312, pressure: 3.8, rpm: 1450, runtime: '4h 23m' });
-  const [pump2, setPump2] = useState({ running: false, flow: 0,   pressure: 0.0, rpm: 0,    runtime: '0h 00m' });
-
-  // PRV
-  const [prvUp,   setPrvUp]   = useState(6.2);
-  const [prvDown, setPrvDown] = useState(4.1);
-
-  /* ── simulation tick ── */
+  /* --- live simulation --- */
   useEffect(() => {
     const id = setInterval(() => {
-      setSysPressure(p  => +clamp(p + rand(0.2), 3.5, 5.2).toFixed(2));
-      setFlowRate   (f  => Math.round(clamp(f + rand(15), 750, 950)));
-      setSysHealth  (h  => +clamp(h + rand(0.3), 96, 99.9).toFixed(1));
-
-      setTankAlpha(t => {
-        const lv = clamp(t.level + rand(2), 20, 95);
-        return { level: +lv.toFixed(1), volume: +(lv / 100 * 5).toFixed(2), height: +(lv / 100 * 7.5).toFixed(2) };
-      });
-      setTankBeta(t => {
-        const lv = clamp(t.level + rand(2), 20, 95);
-        return { level: +lv.toFixed(1), volume: +(lv / 100 * 5).toFixed(2), height: +(lv / 100 * 7.5).toFixed(2) };
-      });
-      setTankGamma(t => {
-        const lv = clamp(t.level + rand(2), 10, 90);
-        return { level: +lv.toFixed(1), volume: +(lv / 100 * 5).toFixed(2), height: +(lv / 100 * 7.5).toFixed(2) };
-      });
-
-      setPump1(p => p.running
-        ? { ...p, flow: Math.round(clamp(p.flow + rand(15), 260, 380)), pressure: +clamp(p.pressure + rand(0.2), 3.2, 4.5).toFixed(2), rpm: Math.round(clamp(p.rpm + rand(30), 1380, 1520)) }
-        : p
-      );
-      setPump2(p => p.running
-        ? { ...p, flow: Math.round(clamp(p.flow + rand(15), 260, 380)), pressure: +clamp(p.pressure + rand(0.2), 3.2, 4.5).toFixed(2), rpm: Math.round(clamp(p.rpm + rand(30), 1380, 1520)) }
-        : p
-      );
-
-      setPrvUp  (v => +clamp(v + rand(0.2), 5.5, 7.0).toFixed(2));
-      setPrvDown(v => +clamp(v + rand(0.15), 3.5, 4.8).toFixed(2));
+      setTankLevels(prev => prev.map((v, i) => {
+        const delta = rand(1.2);
+        const lo = i === 2 ? 35 : 50;
+        return clamp(v + delta, lo, 99);
+      }));
+      setPressure(prev => ({
+        sys:        clamp(prev.sys        + rand(0.12), 3.5, 5.2),
+        upstream:   clamp(prev.upstream   + rand(0.1),  5.5, 7.2),
+        downstream: clamp(prev.downstream + rand(0.08), 3.5, 5.0),
+      }));
+      setZonePres(prev => prev.map(v => clamp(v + rand(0.08), 2.8, 4.5)));
+      setTotalFlow(prev => clamp(prev + rand(18), 700, 1000));
+      setTick(t => t + 1);
     }, 2000);
     return () => clearInterval(id);
   }, []);
 
-  /* ── pump toggle ── */
-  const togglePump = (which) => {
-    if (which === 1) {
-      setPump1(p => ({
-        ...p,
-        running: !p.running,
-        flow: !p.running ? 312 : 0,
-        pressure: !p.running ? 3.8 : 0.0,
-        rpm: !p.running ? 1450 : 0,
-      }));
-    } else {
-      setPump2(p => ({
-        ...p,
-        running: !p.running,
-        flow: !p.running ? 295 : 0,
-        pressure: !p.running ? 3.6 : 0.0,
-        rpm: !p.running ? 1420 : 0,
-      }));
-    }
-  };
+  /* --- derived values --- */
+  const pump1Flow = pump1Running ? Math.round(totalFlow * 0.72) : 0;
+  const pump2Flow = pump2Running ? Math.round(totalFlow * 0.28) : 0;
+  const volumes   = tankLevels.map(pct => ((pct / 100) * 2.8).toFixed(2));
+  const netHealth = (98.4 + rand(0.3)).toFixed(1);
 
-  /* ── tank level setter from slider ── */
-  const setTankLevel = (setter, lv) => {
-    const level = parseFloat(lv);
-    setter({ level, volume: +(level / 100 * 5).toFixed(2), height: +(level / 100 * 7.5).toFixed(2) });
-  };
+  /* --- pipe animation speed (active vs none) --- */
+  const pipeAnim = (active) => active
+    ? { stroke: '#1e90ff', strokeDasharray: '16 8', animation: 'pid-flow 1.2s linear infinite' }
+    : { stroke: '#334155', strokeDasharray: '16 8' };
 
-  /* ── alert feed ── */
-  const alerts = [
-    { type: 'WARN', msg: 'Tank Gamma level below 45% threshold',   time: '2 min ago'  },
-    { type: 'INFO', msg: 'Pump Station 2 started',                  time: '8 min ago'  },
-    { type: 'CRIT', msg: 'PRV downstream pressure spike detected',  time: '15 min ago' },
-    { type: 'INFO', msg: 'User Pete logged in from 192.168.1.42',   time: '22 min ago' },
-    { type: 'OK',   msg: 'Tank Alpha refill completed successfully', time: '1 hr ago'   },
-  ];
-  const alertColor = { CRIT: '#ef4444', WARN: '#f59e0b', INFO: '#1e90ff', OK: '#10b981' };
-  const alertIcon  = { CRIT: '⚡', WARN: '⚠', INFO: 'ℹ', OK: '✓' };
+  const redPipeStyle = { stroke: '#ef4444', strokeDasharray: '12 6', animation: 'pid-flow-red 1.5s linear infinite' };
 
-  /* ── tank fill color ── */
-  const tankColor = (lv) => lv < 30 ? '#ef4444' : lv < 50 ? '#f59e0b' : '#1e90ff';
-  const tankStatus = (lv) => lv < 30 ? 'CRITICAL' : lv < 50 ? 'LOW' : 'NORMAL';
-  const tankStatusCls = (lv) => lv < 30 ? 'd1-badge-crit' : lv < 50 ? 'd1-badge-warn' : 'd1-badge-ok';
-
-  const prvRatio = prvUp > 0 ? ((1 - prvDown / prvUp) * 100).toFixed(1) : 0;
-
-  /* ══════════════════════════════════════════════════════════════════
-     RENDER
-  ══════════════════════════════════════════════════════════════════ */
   return (
-    <div className="d1-dashboard">
-
-      {/* ── SYSTEM HEADER BAR ── */}
-      <div className="d1-header-bar">
-        <div className="d1-header-left">
-          <span className="d1-live-dot"/>
-          <span className="d1-header-title">SCADA CONTROL ROOM</span>
-          <span className="d1-header-subtitle">Enterprise Monitoring System • v4.2.1</span>
-        </div>
-        <div className="d1-header-right">
-          <span className="d1-header-meta">UTC+3 &nbsp;|&nbsp; Node: MASTER-01 &nbsp;|&nbsp; Poll: 2s</span>
-          <span className="d1-online-pill">● LIVE</span>
-        </div>
+    <div className="d1-scada-screen">
+      {/* ── Status strip above SVG ── */}
+      <div className="d1-status-strip">
+        <span className="d1-badge d1-badge--online">● SYSTEM ONLINE</span>
+        <span className="d1-badge d1-badge--ok">● COMMS OK</span>
+        <span className="d1-badge d1-badge--warn">▲ 2 ALARMS ACTIVE</span>
+        <span className="d1-badge d1-badge--info">⏱ AUTO-SCAN: 2s</span>
+        <span className="d1-badge d1-badge--ts">{timestamp}</span>
+        {/* pump toggle buttons */}
+        <button className={`d1-btn ${pump1Running ? 'd1-btn--stop' : 'd1-btn--start'}`}
+          onClick={() => setPump1Running(r => !r)}>
+          PMP-001: {pump1Running ? 'STOP' : 'START'}
+        </button>
+        <button className={`d1-btn ${pump2Running ? 'd1-btn--stop' : 'd1-btn--start'}`}
+          onClick={() => setPump2Running(r => !r)}>
+          PMP-002: {pump2Running ? 'STOP' : 'START'}
+        </button>
       </div>
 
-      {/* ── TOP ROW: KPI CARDS ── */}
-      <div className="d1-kpi-row">
+      {/* ── Main SVG ── */}
+      <svg
+        className="d1-pid-svg"
+        width="100%"
+        viewBox="0 0 1400 720"
+        preserveAspectRatio="xMidYMid meet"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        {/* ── DEFS: grid pattern, arrow marker, clip paths ── */}
+        <defs>
+          {/* dot grid */}
+          <pattern id="pid-grid" x="0" y="0" width="30" height="30" patternUnits="userSpaceOnUse">
+            <circle cx="15" cy="15" r="1" fill="#2d8c7e" />
+          </pattern>
+          {/* flow arrow marker – blue */}
+          <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#60a5fa" />
+          </marker>
+          {/* flow arrow marker – red */}
+          <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#f87171" />
+          </marker>
+          {/* flow arrow marker – yellow (control) */}
+          <marker id="arrow-yellow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <polygon points="0 0, 6 3, 0 6" fill="#fbbf24" />
+          </marker>
+        </defs>
 
-        {/* 1 — System Pressure */}
-        <div className="d1-kpi-card d1-kpi-green">
-          <div className="d1-kpi-accent"/>
-          <div className="d1-kpi-body">
-            <div className="d1-kpi-label">System Pressure</div>
-            <div className="d1-kpi-value">{sysPressure.toFixed(2)}<span className="d1-kpi-unit"> bar</span></div>
-            <div className="d1-kpi-trend d1-trend-up">▲ +0.3 vs 1h avg</div>
-          </div>
-          <div className="d1-kpi-icon">⬡</div>
-        </div>
+        {/* ── Background ── */}
+        <rect width={1400} height={720} fill="#1a5c52" />
+        <rect width={1400} height={720} fill="url(#pid-grid)" />
 
-        {/* 2 — Flow Rate */}
-        <div className="d1-kpi-card d1-kpi-blue">
-          <div className="d1-kpi-accent"/>
-          <div className="d1-kpi-body">
-            <div className="d1-kpi-label">Network Flow Rate</div>
-            <div className="d1-kpi-value">{flowRate}<span className="d1-kpi-unit"> L/min</span></div>
-            <div className="d1-kpi-trend d1-trend-stable">→ Stable</div>
-          </div>
-          <div className="d1-kpi-icon">◈</div>
-        </div>
+        {/* ── Header bar ── */}
+        <rect x={0} y={0} width={1400} height={50} fill="#0d3d35" />
+        <text x={700} y={32} fill="#ffffff" fontSize={16} fontFamily="monospace" fontWeight="bold"
+              textAnchor="middle" letterSpacing={3}>
+          WATER DISTRIBUTION SYSTEM — LIVE MONITOR
+        </text>
+        {/* timestamp */}
+        <text x={1380} y={32} fill="#94a3b8" fontSize={10} fontFamily="monospace" textAnchor="end">{timestamp}</text>
+        {/* alarm indicators */}
+        <circle cx={30} cy={25} r={8} fill="#22c55e" />
+        <text x={42} y={29} fill="#94a3b8" fontSize={8} fontFamily="monospace">PWR</text>
+        <circle cx={80} cy={25} r={8} fill="#22c55e" />
+        <text x={92} y={29} fill="#94a3b8" fontSize={8} fontFamily="monospace">COMMS</text>
+        <circle cx={138} cy={25} r={8} fill="#f59e0b" />
+        <text x={150} y={29} fill="#94a3b8" fontSize={8} fontFamily="monospace">ALARM</text>
 
-        {/* 3 — Active Alarms */}
-        <div className="d1-kpi-card d1-kpi-amber">
-          <div className="d1-kpi-accent"/>
-          <div className="d1-kpi-body">
-            <div className="d1-kpi-label">Active Alarms</div>
-            <div className="d1-kpi-value">{activeAlarms}<span className="d1-kpi-unit"> active</span></div>
-            <div className="d1-kpi-trend d1-trend-up">▲ +1 since last hour</div>
-          </div>
-          <div className="d1-kpi-icon">⚠</div>
-        </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  PIPE NETWORK                                                  */}
+        {/* ══════════════════════════════════════════════════════════════ */}
 
-        {/* 4 — System Health */}
-        <div className="d1-kpi-card d1-kpi-green">
-          <div className="d1-kpi-accent"/>
-          <div className="d1-kpi-body">
-            <div className="d1-kpi-label">System Health</div>
-            <div className="d1-kpi-value">{sysHealth.toFixed(1)}<span className="d1-kpi-unit">%</span></div>
-            <div className="d1-kpi-trend">
-              <span className="d1-pulse-dot"/>
-              <span style={{ color: '#10b981' }}>All Systems Nominal</span>
-            </div>
-          </div>
-          <div className="d1-kpi-icon">✦</div>
-        </div>
+        {/* Reservoir → Pump manifold vertical header (x=200) */}
+        <path d="M 160 350 H 232" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump1Running || pump2Running)} />
+        {/* manifold vertical */}
+        <path d="M 232 300 V 450" fill="none" strokeWidth={8} stroke="#334155" strokeDasharray="none" />
+        {/* Pump 1 suction */}
+        <path d="M 232 300 H 260" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump1Running)} />
+        {/* Pump 2 suction */}
+        <path d="M 232 450 H 260" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump2Running)} />
 
-      </div>
+        {/* Pump 1 discharge → tank header */}
+        <path d="M 288 300 H 360 V 540" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump1Running)} />
+        {/* Pump 2 discharge → tank header */}
+        <path d="M 288 450 H 360" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump2Running)} />
 
-      {/* ── MIDDLE ROW ── */}
-      <div className="d1-mid-row">
+        {/* Tank header horizontal (x=360, y=540) */}
+        <path d="M 360 540 H 820" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(pump1Running || pump2Running)} />
+        {/* Tank drops */}
+        <path d="M 500 540 V 680" fill="none" strokeWidth={6} style={pipeAnim(pump1Running || pump2Running)} />
+        <path d="M 620 540 V 680" fill="none" strokeWidth={6} style={pipeAnim(pump1Running || pump2Running)} />
+        <path d="M 740 540 V 680" fill="none" strokeWidth={6} style={pipeAnim(pump1Running || pump2Running)} />
 
-        {/* LEFT: Tank Monitoring Panel */}
-        <div className="d1-panel d1-tanks-panel">
-          <div className="d1-panel-header">
-            <span className="d1-panel-title">Storage Tanks — Live Levels</span>
-            <span className="d1-panel-badge">3 UNITS ONLINE</span>
-          </div>
+        {/* Tanks → PRV header */}
+        <path d="M 820 540 V 350 H 920" fill="none" strokeWidth={8} markerEnd="url(#arrow-blue)"
+              style={pipeAnim(true)} />
 
-          <div className="d1-tanks-grid">
-            {[
-              { name: 'Tank Alpha', data: tankAlpha, setter: setTankAlpha },
-              { name: 'Tank Beta',  data: tankBeta,  setter: setTankBeta  },
-              { name: 'Tank Gamma', data: tankGamma, setter: setTankGamma },
-            ].map(({ name, data, setter }) => {
-              const color = tankColor(data.level);
-              return (
-                <div className="d1-tank-card" key={name}>
-                  <div className="d1-tank-name">{name}</div>
+        {/* PRV → distribution */}
+        <path d="M 980 350 H 1080" fill="none" strokeWidth={6} markerEnd="url(#arrow-red)"
+              style={redPipeStyle} />
+        {/* distribution header vertical */}
+        <path d="M 1080 200 V 500" fill="none" strokeWidth={6} stroke="#ef4444" strokeDasharray="12 6"
+              style={redPipeStyle} />
+        {/* zone branches */}
+        <path d="M 1080 230 H 1160" fill="none" strokeWidth={5} markerEnd="url(#arrow-red)"
+              style={redPipeStyle} />
+        <path d="M 1080 365 H 1160" fill="none" strokeWidth={5} markerEnd="url(#arrow-red)"
+              style={redPipeStyle} />
+        <path d="M 1080 490 H 1160" fill="none" strokeWidth={5} markerEnd="url(#arrow-red)"
+              style={redPipeStyle} />
 
-                  {/* Vertical gauge */}
-                  <div className="d1-tank-gauge-wrap">
-                    {/* min/max lines */}
-                    <div className="d1-tank-line d1-tank-line-hi" title="High: 90%"/>
-                    <div className="d1-tank-line d1-tank-line-lo" title="Low: 30%"/>
-                    <div className="d1-tank-outer">
-                      <div
-                        className="d1-tank-fill"
-                        style={{
-                          height: `${data.level}%`,
-                          background: `linear-gradient(to top, ${color}dd, ${color}88)`,
-                          boxShadow: `0 0 12px ${color}66`,
-                        }}
-                      >
-                        <div className="d1-tank-shimmer"/>
-                      </div>
-                    </div>
-                    <div className="d1-tank-pct" style={{ color }}>{data.level.toFixed(1)}%</div>
-                  </div>
+        {/* control signal lines (dashed yellow, thin) */}
+        <path d="M 200 520 H 260 V 310" fill="none" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 4"
+              markerEnd="url(#arrow-yellow)" />
+        <path d="M 200 520 H 260 V 460" fill="none" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="5 4"
+              markerEnd="url(#arrow-yellow)" />
+        <path d="M 200 520 H 950 V 390" fill="none" stroke="#fbbf24" strokeWidth={1} strokeDasharray="5 4"
+              markerEnd="url(#arrow-yellow)" opacity={0.5} />
 
-                  {/* slider */}
-                  <div className="d1-tank-slider-wrap">
-                    <label className="d1-slider-label">Simulate Level</label>
-                    <input
-                      type="range"
-                      className="d1-slider"
-                      min="5" max="95" step="0.5"
-                      value={data.level}
-                      onChange={e => setTankLevel(setter, e.target.value)}
-                      style={{ accentColor: color }}
-                    />
-                  </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  VALVES                                                        */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <Valve x={180} y={350} open={true}  label="V-01" />
+        <Valve x={232} y={380} open={true}  label="V-02" />
+        <Valve x={330} y={300} open={pump1Running} label="V-03" />
+        <Valve x={330} y={450} open={pump2Running} label="V-04" />
+        <Valve x={500} y={540} open={true}  label="V-05" />
+        <Valve x={620} y={540} open={true}  label="V-06" />
+        <Valve x={740} y={540} open={true}  label="V-07" />
+        <Valve x={880} y={350} open={true}  label="V-08" />
 
-                  {/* meta row */}
-                  <div className="d1-tank-meta">
-                    <div className="d1-tank-meta-item">
-                      <span className="d1-meta-lbl">Volume</span>
-                      <span className="d1-meta-val">{data.volume} ML</span>
-                    </div>
-                    <div className="d1-tank-meta-item">
-                      <span className="d1-meta-lbl">Height</span>
-                      <span className="d1-meta-val">{data.height} m</span>
-                    </div>
-                    <div className="d1-tank-meta-item">
-                      <span className={`d1-badge ${tankStatusCls(data.level)}`}>
-                        {tankStatus(data.level)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  RESERVOIR                                                     */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <g>
+          {/* wavy top path */}
+          <path d="M 40 310 q 15 -16 30 0 q 15 16 30 0 q 15 -16 30 0 q 15 16 30 0 V 410 H 40 Z"
+                fill="#1e6aa8" stroke="#3b82f6" strokeWidth={2} />
+          {/* level indicator bar */}
+          <rect x={32} y={310} width={6} height={100} fill="#0d1f2d" stroke="#3b82f6" strokeWidth={1} />
+          <rect x={32} y={345} width={6} height={65} fill="#1e90ff" />
+          <text x={80} y={424} fill="#93c5fd" fontSize={9} fontFamily="monospace" textAnchor="middle" fontWeight="bold">RESERVOIR</text>
+          <text x={80} y={436} fill="#93c5fd" fontSize={9} fontFamily="monospace" textAnchor="middle">RES-001</text>
+          <LcdBox x={36} y={440} w={90} h={24} label="LEVEL" value="65" unit="%" />
+        </g>
 
-        {/* RIGHT: Alerts Feed */}
-        <div className="d1-panel d1-alerts-panel">
-          <div className="d1-panel-header">
-            <span className="d1-panel-title">System Alerts</span>
-            <span className="d1-badge d1-badge-crit" style={{ fontSize: '11px', padding: '2px 8px' }}>
-              {alerts.filter(a => a.type === 'CRIT' || a.type === 'WARN').length} Active
-            </span>
-          </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  PUMPS                                                         */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <Pump x={274} y={300} running={pump1Running} label="PMP-001" flow={pump1Flow} />
+        <Pump x={274} y={450} running={pump2Running} label="PMP-002" flow={pump2Flow} />
 
-          <div className="d1-alerts-list">
-            {alerts.map((a, i) => (
-              <div className="d1-alert-item" key={i}
-                style={{ borderLeftColor: alertColor[a.type] }}>
-                <div className="d1-alert-icon" style={{ color: alertColor[a.type] }}>
-                  {alertIcon[a.type]}
-                </div>
-                <div className="d1-alert-content">
-                  <div className="d1-alert-type-row">
-                    <span className="d1-alert-type" style={{ color: alertColor[a.type] }}>[{a.type}]</span>
-                    <span className="d1-alert-time">{a.time}</span>
-                  </div>
-                  <div className="d1-alert-msg">{a.msg}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  TANK FARM                                                     */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <Tank x={465}  y={390} id="TK-001" pct={tankLevels[0]} volume={volumes[0]} warning={false} />
+        <Tank x={585}  y={390} id="TK-002" pct={tankLevels[1]} volume={volumes[1]} warning={false} />
+        <Tank x={705}  y={390} id="TK-003" pct={tankLevels[2]} volume={volumes[2]} warning={tankLevels[2] < 45} />
 
-      </div>
+        {/* Tank farm label */}
+        <text x={620} y={378} fill="#94a3b8" fontSize={10} fontFamily="monospace" textAnchor="middle" letterSpacing={2} opacity={0.8}>
+          ─── TANK FARM ───
+        </text>
 
-      {/* ── BOTTOM ROW ── */}
-      <div className="d1-bot-row">
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  PRV STATION                                                   */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <PRV x={950} y={350} upstream={fmt1(pressure.upstream)} downstream={fmt1(pressure.downstream)} />
 
-        {/* LEFT: Pump Stations */}
-        <div className="d1-panel d1-pumps-panel">
-          <div className="d1-panel-header">
-            <span className="d1-panel-title">Pump Stations</span>
-            <span className="d1-panel-badge">
-              {(pump1.running ? 1 : 0) + (pump2.running ? 1 : 0)} RUNNING
-            </span>
-          </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  DISTRIBUTION ZONES                                            */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <ZoneNode x={1210} y={230} label="ZONE A" pressure={fmt1(zonePres[0])} />
+        <ZoneNode x={1210} y={365} label="ZONE B" pressure={fmt1(zonePres[1])} />
+        <ZoneNode x={1210} y={490} label="ZONE C" pressure={fmt1(zonePres[2])} />
 
-          <div className="d1-pumps-grid">
-            {[
-              { label: 'Pump Station 1', idx: 1, state: pump1, toggle: () => togglePump(1) },
-              { label: 'Pump Station 2', idx: 2, state: pump2, toggle: () => togglePump(2) },
-            ].map(({ label, idx, state, toggle }) => (
-              <div className="d1-pump-card" key={idx}>
-                <div className="d1-pump-top">
-                  <div className="d1-pump-status-wrap">
-                    <span className={`d1-pump-ring ${state.running ? 'd1-ring-running' : 'd1-ring-standby'}`}>
-                      <span className={`d1-pump-dot ${state.running ? 'd1-dot-green' : 'd1-dot-amber'}`}/>
-                    </span>
-                    <div>
-                      <div className="d1-pump-name">{label}</div>
-                      <div className={`d1-pump-status-txt ${state.running ? 'd1-col-green' : 'd1-col-amber'}`}>
-                        {state.running ? '● RUNNING' : '◐ STANDBY'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    className={`d1-pump-btn ${state.running ? 'd1-btn-stop' : 'd1-btn-start'}`}
-                    onClick={toggle}
-                  >
-                    {state.running ? '⏹ STOP' : '▶ START'}
-                  </button>
-                </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  CONTROL PANEL (bottom-left)                                   */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <rect x={28} y={470} width={188} height={220} rx={6} fill="#0d1f2d" stroke="#1e3a5f" strokeWidth={2} />
+        <rect x={28} y={470} width={188} height={22} rx={6} fill="#0a1628" />
+        <text x={122} y={485} fill="#94a3b8" fontSize={9} fontFamily="monospace" textAnchor="middle" letterSpacing={2}>CONTROL PANEL</text>
 
-                <div className="d1-pump-metrics">
-                  <div className="d1-pump-metric">
-                    <span className="d1-pm-lbl">Flow</span>
-                    <span className="d1-pm-val d1-col-blue">{state.flow} <small>L/min</small></span>
-                  </div>
-                  <div className="d1-pump-metric">
-                    <span className="d1-pm-lbl">Pressure</span>
-                    <span className="d1-pm-val d1-col-green">{state.pressure.toFixed(1)} <small>bar</small></span>
-                  </div>
-                  <div className="d1-pump-metric">
-                    <span className="d1-pm-lbl">RPM</span>
-                    <span className="d1-pm-val">{state.rpm}</span>
-                  </div>
-                  <div className="d1-pump-metric">
-                    <span className="d1-pm-lbl">Runtime</span>
-                    <span className="d1-pm-val">{state.runtime}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* LCD readouts */}
+        <LcdBox x={38} y={498} w={168} h={28} label="SYS PRESSURE" value={fmt1(pressure.sys)} unit=" bar" />
+        <LcdBox x={38} y={532} w={168} h={28} label="TOTAL FLOW"   value={fmt0(totalFlow)}     unit=" L/m" />
+        <LcdBox x={38} y={566} w={168} h={28} label="NETWORK HLT"  value={netHealth}            unit="%" />
+        <LcdBox x={38} y={600} w={168} h={28} label="ACTIVE ALRM"  value="2"                    unit="" />
 
-        {/* RIGHT: PRV Station */}
-        <div className="d1-panel d1-prv-panel">
-          <div className="d1-panel-header">
-            <span className="d1-panel-title">PRV Station Alpha</span>
-            <span className="d1-badge d1-badge-ok">ACTIVE</span>
-          </div>
+        {/* Indicator lights */}
+        <circle cx={50}  cy={646} r={7} fill="#22c55e" />
+        <text x={62}  y={650} fill="#94a3b8" fontSize={8} fontFamily="monospace">POWER</text>
+        <circle cx={108} cy={646} r={7} fill="#22c55e" />
+        <text x={120} y={650} fill="#94a3b8" fontSize={8} fontFamily="monospace">COMMS</text>
+        <circle cx={50}  cy={668} r={7} fill="#f59e0b" />
+        <text x={62}  y={672} fill="#94a3b8" fontSize={8} fontFamily="monospace">ALARM</text>
+        <circle cx={108} cy={668} r={7} fill="#22c55e" />
+        <text x={120} y={672} fill="#94a3b8" fontSize={8} fontFamily="monospace">FAULT</text>
 
-          <div className="d1-prv-gauges">
-            <ArcGauge value={prvUp}   max={10} label="Upstream Pressure"   color="#ef4444"/>
-            <div className="d1-prv-arrow">
-              <span className="d1-prv-arrow-icon">⟹</span>
-              <span className="d1-prv-ratio">{prvRatio}% reduction</span>
-            </div>
-            <ArcGauge value={prvDown} max={10} label="Downstream Pressure" color="#10b981"/>
-          </div>
+        {/* ══════════════════════════════════════════════════════════════ */}
+        {/*  SECTION LABELS / CALLOUTS                                     */}
+        {/* ══════════════════════════════════════════════════════════════ */}
+        <text x={80}  y={64} fill="#64748b" fontSize={9} fontFamily="monospace" textAnchor="middle">SOURCE</text>
+        <text x={274} y={64} fill="#64748b" fontSize={9} fontFamily="monospace" textAnchor="middle">PUMP STN</text>
+        <text x={620} y={64} fill="#64748b" fontSize={9} fontFamily="monospace" textAnchor="middle">STORAGE / TANK FARM</text>
+        <text x={950} y={64} fill="#64748b" fontSize={9} fontFamily="monospace" textAnchor="middle">PRV STN</text>
+        <text x={1210} y={64} fill="#64748b" fontSize={9} fontFamily="monospace" textAnchor="middle">DISTRIBUTION</text>
+        {/* section dividers */}
+        {[156, 400, 840, 1090].map(lx => (
+          <line key={lx} x1={lx} y1={55} x2={lx} y2={720} stroke="#1e3a5f" strokeWidth={1} strokeDasharray="4 4" />
+        ))}
 
-          <div className="d1-prv-meta">
-            <div className="d1-prv-meta-item">
-              <span className="d1-meta-lbl">Valve Position</span>
-              <span className="d1-meta-val">65% OPEN</span>
-            </div>
-            <div className="d1-prv-meta-item">
-              <span className="d1-meta-lbl">Set Point</span>
-              <span className="d1-meta-val">4.0 bar</span>
-            </div>
-            <div className="d1-prv-meta-item">
-              <span className="d1-meta-lbl">Mode</span>
-              <span className="d1-meta-val d1-col-green">AUTO</span>
-            </div>
-          </div>
-
-          <PressureWave color="#1e90ff"/>
-        </div>
-
-      </div>
-
-      {/* ── FOOTER ── */}
-      <div className="d1-footer">
-        <span>EEMACS Control Room Dashboard — Design 1</span>
-        <span>© 2026 Enterprise Edition</span>
-        <span className="d1-footer-live">⬤ Live Data Stream Active</span>
-      </div>
-
+        {/* footer bar */}
+        <rect x={0} y={700} width={1400} height={20} fill="#0d3d35" />
+        <text x={700} y={714} fill="#4b6fa0" fontSize={8} fontFamily="monospace" textAnchor="middle" letterSpacing={2}>
+          EEMACS v2 — P&amp;ID PROCESS DIAGRAM — WATER DISTRIBUTION — {timestamp}
+        </text>
+      </svg>
     </div>
   );
 }

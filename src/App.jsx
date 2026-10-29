@@ -3,11 +3,13 @@ import { initialScadaUsers, ORIGINAL_ROLES, isActiveLast20Mins, isWaterRole } fr
 import ScadaTopBar from './components/ScadaTopBar';
 import ScadaDashboard from './components/ScadaDashboard';
 import UserCard from './components/UserCard';
+import UserListView from './components/UserListView';
 import UserModal from './components/UserModal';
 import './App.css';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('users'); // 'dashboard' | 'users'
+  const [viewMode, setViewMode] = useState('card'); // 'card' | 'list' (default card)
   const [users, setUsers] = useState(initialScadaUsers);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -174,6 +176,26 @@ export default function App() {
                 </select>
               </div>
 
+              {/* View Mode Toggle: Cards vs List */}
+              <div className="ent-view-toggle">
+                <button
+                  type="button"
+                  className={`view-btn ${viewMode === 'card' ? 'active' : ''}`}
+                  onClick={() => setViewMode('card')}
+                  title="Card Grid View (Default)"
+                >
+                  <i className="fas fa-th-large"></i> Cards
+                </button>
+                <button
+                  type="button"
+                  className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
+                  onClick={() => setViewMode('list')}
+                  title="Table List View"
+                >
+                  <i className="fas fa-list"></i> List
+                </button>
+              </div>
+
               {/* Add User Action */}
               <button className="ent-add-personnel-btn" onClick={handleAddNew}>
                 <i className="fas fa-user-plus"></i>
@@ -200,17 +222,28 @@ export default function App() {
               <span className="active-count-tag">{onDutyCount} Online Now</span>
             </div>
 
-            {/* Responsive 4-Column Grid */}
-            <div className="ent-operators-grid">
-              {filteredUsers.map(user => (
-                <UserCard
-                  key={user.userId}
-                  user={user}
-                  onOpenDetail={handleOpenDetail}
-                  onQuickTestAlert={handleQuickTestAlert}
-                />
-              ))}
-            </div>
+            {/* Conditional Display: Card Grid vs List Table */}
+            {viewMode === 'card' ? (
+              <div className="ent-operators-grid">
+                {filteredUsers.map(user => (
+                  <UserCard
+                    key={user.userId}
+                    user={user}
+                    onOpenDetail={handleOpenDetail}
+                    onQuickTestAlert={handleQuickTestAlert}
+                  />
+                ))}
+              </div>
+            ) : (
+              <UserListView
+                users={filteredUsers}
+                onOpenDetail={handleOpenDetail}
+                onSendLink={handleSendLink}
+                onResetPassword={handleResetPassword}
+                onDelete={handleDelete}
+                onQuickTestAlert={handleQuickTestAlert}
+              />
+            )}
 
             {filteredUsers.length === 0 && (
               <div className="ent-empty-roster">
